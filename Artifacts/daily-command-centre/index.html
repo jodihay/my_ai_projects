@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Daily Command Centre",
+  "schemaVersion": 1,
+  "description": "Jodi's Daily Command Centre: a live page with three bands. Numbers (cash on hand and receivables from Xero, open and overdue task counts from ClickUp, today's meeting count, unread email count), a tasks-by-due-date bar chart plus auto flags for overdue invoices, overdue tasks and a busy inbox, and actionable lists for today's schedule, priority tasks and inbox items. Refreshes from Xero, ClickUp, Google Calendar and Gmail on each open.",
+  "mcpTools": [
+    "mcp__9c3fdbbc-b91a-44e8-9210-dd195ce72c8c__get_cash_position",
+    "mcp__9c3fdbbc-b91a-44e8-9210-dd195ce72c8c__get_contacts_and_receivables",
+    "mcp__700423b5-b257-4e97-8dd5-0cb84bbb9e4f__clickup_filter_tasks",
+    "mcp__fb3300d6-cfd2-452d-b03c-95c7661ada45__list_events",
+    "mcp__ce0ded89-bfe9-4a36-a079-b1b80dcb865c__search_threads"
+  ],
+  "mcpServerNames": [
+    "Xero",
+    "Xero",
+    "ClickUp",
+    "Google Calendar",
+    "Gmail"
+  ]
+}
+</script>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Command Centre</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #f6f7f9;
+    color: #1a1d24;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 60px; }
+  header.top { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  header.top h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: #6b7280; font-size: 12.5px; }
+  h2.band { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin: 26px 0 10px; font-weight: 600; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi { background: #fff; border: 1px solid #e7e9ee; border-radius: 12px; padding: 14px 15px; }
+  .kpi .label { font-size: 11.5px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kpi .val { font-size: 24px; font-weight: 650; margin-top: 6px; letter-spacing: -0.02em; }
+  .kpi .val.small { font-size: 20px; }
+  .kpi .foot { font-size: 11.5px; color: #8a90a0; margin-top: 3px; }
+  .kpi.alert-tone .val { color: #c0392b; }
+  .kpi.good-tone .val { color: #1e874b; }
+
+  .cols { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; align-items: start; }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; align-items: start; }
+  .card { background: #fff; border: 1px solid #e7e9ee; border-radius: 12px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 10px; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+  .card h3 .count { background: #eef0f4; color: #4b5160; border-radius: 20px; font-size: 11px; padding: 1px 8px; font-weight: 600; }
+
+  .row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid #f0f1f4; align-items: flex-start; }
+  .row:first-of-type { border-top: 0; }
+  .row a { color: #1a56db; text-decoration: none; font-weight: 550; }
+  .row a:hover { text-decoration: underline; }
+  .row .meta { color: #8a90a0; font-size: 11.5px; margin-top: 2px; }
+  .time { font-variant-numeric: tabular-nums; color: #4b5160; font-weight: 600; min-width: 62px; font-size: 12.5px; }
+  .pill { font-size: 10.5px; padding: 1px 7px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+  .pill.od { background: #fbe4e2; color: #b23c2f; }
+  .pill.today { background: #fdf1dc; color: #9a6a12; }
+  .pill.soon { background: #e6f0fb; color: #1f5fb0; }
+  .pill.hi { background: #f3e4fb; color: #7c3a9a; }
+  .pill.status { background: #eef0f4; color: #545a68; text-transform: capitalize; }
+
+  .chart-box { position: relative; height: 210px; }
+  .empty { color: #9299a6; font-size: 12.5px; padding: 10px 0; }
+  .alerts .row { align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; margin-top: 6px; }
+  .dot.red { background: #d94a3a; } .dot.amber { background: #e0a020; }
+  .loading { color: #9299a6; font-size: 12.5px; padding: 20px 0; text-align: center; }
+  .err { color: #b23c2f; font-size: 12px; }
+  footer.tip { margin-top: 26px; color: #9299a6; font-size: 11.5px; }
+  @media (max-width: 820px) { .cols, .cols3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Daily Command Centre</h1>
+    <div class="sub" id="asof">Loading&hellip;</div>
+  </header>
+  <div class="sub" id="orgline"></div>
+
+  <h2 class="band">The numbers</h2>
+  <div class="kpis" id="kpis">
+    <div class="kpi"><div class="label">Loading</div><div class="val small">&hellip;</div></div>
+  </div>
+
+  <div class="cols" style="margin-top:16px;">
+    <div class="card">
+      <h3>Tasks by due date</h3>
+      <div class="chart-box"><canvas id="taskChart"></canvas></div>
+    </div>
+    <div class="card alerts">
+      <h3>Flags <span class="count" id="alertCount">0</span></h3>
+      <div id="alerts"><div class="loading">Checking&hellip;</div></div>
+    </div>
+  </div>
+
+  <h2 class="band">What needs doing</h2>
+  <div class="cols3">
+    <div class="card">
+      <h3>Today's schedule <span class="count" id="calCount">0</span></h3>
+      <div id="cal"><div class="loading">Loading&hellip;</div></div>
+    </div>
+    <div class="card">
+      <h3>Priority tasks <span class="count" id="taskCount">0</span></h3>
+      <div id="tasks"><div class="loading">Loading&hellip;</div></div>
+    </div>
+    <div class="card">
+      <h3>Inbox needs a look <span class="count" id="mailCount">0</span></h3>
+      <div id="mail"><div class="loading">Loading&hellip;</div></div>
+    </div>
+  </div>
+
+  <footer class="tip">Live data from Xero, ClickUp, Google Calendar and Gmail. Press Reload in the header above to refresh.</footer>
+</div>
+
+<script>
+const TOOLS = {
+  cash: "mcp__9c3fdbbc-b91a-44e8-9210-dd195ce72c8c__get_cash_position",
+  recv: "mcp__9c3fdbbc-b91a-44e8-9210-dd195ce72c8c__get_contacts_and_receivables",
+  tasks: "mcp__700423b5-b257-4e97-8dd5-0cb84bbb9e4f__clickup_filter_tasks",
+  cal: "mcp__fb3300d6-cfd2-452d-b03c-95c7661ada45__list_events",
+  mail: "mcp__ce0ded89-bfe9-4a36-a079-b1b80dcb865c__search_threads"
+};
+
+function unwrap(r){
+  if(!r) return null;
+  if(r.isError) throw new Error(r.content && r.content[0] ? r.content[0].text : "tool error");
+  if(r.structuredContent) return r.structuredContent;
+  if(r.content && r.content[0] && r.content[0].text){ try { return JSON.parse(r.content[0].text); } catch(e){ return r.content[0].text; } }
+  return r;
+}
+async function call(name, args){ return unwrap(await window.cowork.callMcpTool(name, args || {})); }
+
+const fmtMoney = (n, ccy) => {
+  const v = Number(n||0);
+  try { return new Intl.NumberFormat("en-AU",{style:"currency",currency:ccy||"AUD",maximumFractionDigits:0}).format(v); }
+  catch(e){ return (ccy||"$") + " " + Math.round(v).toLocaleString(); }
+};
+const esc = s => String(s==null?"":s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function endOfToday(){ const d=new Date(); d.setHours(23,59,59,999); return d; }
+function dayName(){ return startOfToday().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long",year:"numeric"}); }
+
+const alerts = [];
+function pushAlert(tone, html){ alerts.push({tone, html}); }
+function renderAlerts(){
+  const box = document.getElementById("alerts");
+  document.getElementById("alertCount").textContent = alerts.length;
+  if(!alerts.length){ box.innerHTML = '<div class="empty">Nothing needs urgent attention. Nice.</div>'; return; }
+  const order = {red:0, amber:1};
+  alerts.sort((a,b)=>order[a.tone]-order[b.tone]);
+  box.innerHTML = alerts.map(a => `<div class="row"><span class="dot ${a.tone}"></span><div>${a.html}</div></div>`).join("");
+}
+
+// ---- MONEY (Xero) ----
+const kpiData = { cash:null, ccy:"AUD", awaiting:null, overdueInv:null, overdueCount:0,
+                  openTasks:null, overdueTasks:0, meetings:null, mail:null };
+
+async function loadMoney(){
+  try{
+    const c = await call(TOOLS.cash);
+    kpiData.ccy = c.organisation_base_currency || "AUD";
+    kpiData.cash = c.cash_balance;
+    document.getElementById("orgline").textContent = c.organisation_name ? (c.organisation_name + (c.last_refreshed ? " · Xero synced " + new Date(c.last_refreshed).toLocaleDateString("en-AU") : "")) : "";
+  }catch(e){ kpiData.cash = "err"; }
+  try{
+    const r = await call(TOOLS.recv);
+    kpiData.awaiting = r.awaiting_total;
+    kpiData.overdueInv = r.overdue_total;
+    kpiData.overdueCount = r.overdue_count || 0;
+    if((r.overdue_count||0) > 0){
+      const inv = (r.top_invoices||[]).slice(0,4).map(i =>
+        `${esc(i.contact_name||i.contact||"Invoice")} &mdash; ${fmtMoney(i.amount_due||i.total||i.amount, kpiData.ccy)}`).join("<br>");
+      pushAlert("red", `<strong>${r.overdue_count} overdue invoice${r.overdue_count>1?"s":""}</strong> totalling ${fmtMoney(r.overdue_total, kpiData.ccy)}${inv?`<div class="meta">${inv}</div>`:""}`);
+    }
+  }catch(e){ kpiData.awaiting = "err"; }
+  renderKpis();
+}
+
+// ---- TASKS (ClickUp) ----
+async function loadTasks(){
+  let tasks = [];
+  try{
+    const t = await call(TOOLS.tasks, { order_by: "due_date" });
+    tasks = (t && t.tasks) ? t.tasks : [];
+  }catch(e){
+    document.getElementById("tasks").innerHTML = `<div class="err">Could not load ClickUp tasks.</div>`;
+    return;
+  }
+  const now = Date.now(), soT = startOfToday().getTime(), eoT = endOfToday().getTime(), week = eoT + 6*864e5;
+  const done = s => /(^|\b)(complete|closed|done)\b/i.test(s||"");
+  const open = tasks.filter(t => !done(t.status));
+  kpiData.openTasks = open.length;
+
+  const buckets = { Overdue:0, Today:0, "This week":0, Later:0, "No date":0 };
+  const overdue = [];
+  open.forEach(t=>{
+    const d = t.due_date ? Number(t.due_date) : null;
+    if(d==null){ buckets["No date"]++; }
+    else if(d < soT){ buckets.Overdue++; overdue.push(t); }
+    else if(d <= eoT){ buckets.Today++; }
+    else if(d <= week){ buckets["This week"]++; }
+    else { buckets.Later++; }
+  });
+  kpiData.overdueTasks = buckets.Overdue;
+  renderKpis();
+  drawChart(buckets);
+
+  if(buckets.Overdue > 0){
+    const top = overdue.slice().sort((a,b)=>Number(a.due_date)-Number(b.due_date)).slice(0,4)
+      .map(t=>`${esc(t.name)} <span class="meta">(${fmtDue(Number(t.due_date))})</span>`).join("<br>");
+    pushAlert("amber", `<strong>${buckets.Overdue} task${buckets.Overdue>1?"s":""} overdue</strong><div class="meta">${top}</div>`);
+  }
+  renderAlerts();
+
+  // Priority list: high priority first, then soonest due
+  const rank = t => {
+    let s = 0;
+    const p = (t.priority && (t.priority.priority||t.priority)) || t.priority;
+    const ps = typeof p === "string" ? p : (p && p.priority);
+    if(/urgent/i.test(ps)) s -= 100; else if(/high/i.test(ps)) s -= 60;
+    const d = t.due_date ? Number(t.due_date) : null;
+    if(d!=null){ if(d < soT) s -= 40; else if(d <= eoT) s -= 30; else if(d <= week) s -= 15; s += d/1e13; }
+    else s += 5;
+    return s;
+  };
+  const pri = open.slice().sort((a,b)=>rank(a)-rank(b)).slice(0,8);
+  document.getElementById("taskCount").textContent = open.length;
+  document.getElementById("tasks").innerHTML = pri.length ? pri.map(t=>{
+    const d = t.due_date ? Number(t.due_date) : null;
+    let pill = "";
+    if(d!=null){
+      if(d < soT) pill = `<span class="pill od">${fmtDue(d)}</span>`;
+      else if(d <= eoT) pill = `<span class="pill today">Today</span>`;
+      else if(d <= week) pill = `<span class="pill soon">${fmtDue(d)}</span>`;
+    }
+    const ps = t.priority && (t.priority.priority||t.priority);
+    const hip = (typeof ps==="string" && /high|urgent/i.test(ps)) ? `<span class="pill hi">${esc(ps)}</span>` : "";
+    return `<div class="row"><div style="flex:1"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.name)}</a>
+      <div class="meta">${esc(t.list && t.list.name || "")} &middot; <span class="pill status">${esc(t.status||"")}</span></div></div>
+      <div style="text-align:right;display:flex;flex-direction:column;gap:4px;align-items:flex-end">${pill}${hip}</div></div>`;
+  }).join("") : '<div class="empty">No open tasks.</div>';
+}
+function fmtDue(ms){
+  const d=new Date(ms), t=startOfToday().getTime(), diff=Math.round((new Date(d).setHours(0,0,0,0)-t)/864e5);
+  if(diff===0) return "Today";
+  if(diff===-1) return "Yesterday";
+  if(diff<0) return Math.abs(diff)+"d ago";
+  if(diff===1) return "Tomorrow";
+  if(diff<7) return "In "+diff+"d";
+  return d.toLocaleDateString("en-AU",{day:"numeric",month:"short"});
+}
+
+// ---- CALENDAR ----
+async function loadCal(){
+  try{
+    const r = await call(TOOLS.cal, { startTime: startOfToday().toISOString(), endTime: endOfToday().toISOString(), pageSize: 12, orderBy: "startTime" });
+    let ev = (r && r.events) ? r.events : [];
+    ev = ev.filter(e => e.eventType !== "FROM_GMAIL" || e.start && e.start.dateTime); // drop all-day gmail hotel blocks
+    kpiData.meetings = ev.filter(e => e.start && e.start.dateTime).length;
+    renderKpis();
+    document.getElementById("calCount").textContent = ev.length;
+    document.getElementById("cal").innerHTML = ev.length ? ev.map(e=>{
+      const t = e.start && e.start.dateTime ? new Date(e.start.dateTime)
+        .toLocaleTimeString("en-AU",{hour:"numeric",minute:"2-digit"}) : "All day";
+      const loc = e.location ? `<div class="meta">${esc(e.location)}</div>` : "";
+      return `<div class="row"><span class="time">${t}</span><div style="flex:1">${esc(e.summary||"(no title)")}${loc}</div></div>`;
+    }).join("") : '<div class="empty">Nothing scheduled today.</div>';
+  }catch(e){
+    document.getElementById("cal").innerHTML = `<div class="err">Could not load calendar.</div>`;
+  }
+}
+
+// ---- GMAIL ----
+async function loadMail(){
+  try{
+    const r = await call(TOOLS.mail, { query: "is:unread in:inbox -category:promotions -category:social -category:forums newer_than:10d", pageSize: 12, view: "THREAD_VIEW_MINIMAL" });
+    const threads = (r && r.threads) ? r.threads : [];
+    const rows = threads.map(th => {
+      const m = (th.messages && th.messages[0]) || {};
+      const from = (m.sender||"").replace(/<.*>/,"").replace(/"/g,"").trim() || (m.sender||"");
+      const fromName = from.includes("@") ? from.split("@")[0] : from;
+      return { id: th.id, subject: m.subject||"(no subject)", from: fromName, date: m.date };
+    });
+    kpiData.mail = rows.length;
+    renderKpis();
+    document.getElementById("mailCount").textContent = rows.length;
+    document.getElementById("mail").innerHTML = rows.length ? rows.slice(0,8).map(x=>{
+      const when = x.date ? new Date(x.date).toLocaleDateString("en-AU",{day:"numeric",month:"short"}) : "";
+      return `<div class="row"><div style="flex:1"><a href="https://mail.google.com/mail/u/0/#inbox/${esc(x.id)}" target="_blank" rel="noopener">${esc(x.subject)}</a>
+        <div class="meta">${esc(x.from)}${when?" &middot; "+when:""}</div></div></div>`;
+    }).join("") : '<div class="empty">Inbox is clear.</div>';
+    if(rows.length >= 8) pushAlert("amber", `<strong>${rows.length}+ unread emails</strong> in your inbox that are not promotions or social`);
+    renderAlerts();
+  }catch(e){
+    document.getElementById("mail").innerHTML = `<div class="err">Could not load Gmail.</div>`;
+  }
+}
+
+// ---- KPI RENDER ----
+function kpiCard(label, val, foot, tone){
+  const t = tone ? " "+tone : "";
+  const small = (typeof val==="string" && val.length>7) ? " small" : "";
+  return `<div class="kpi${t}"><div class="label">${label}</div><div class="val${small}">${val}</div>${foot?`<div class="foot">${foot}</div>`:""}</div>`;
+}
+function renderKpis(){
+  const d = kpiData;
+  const v = x => x==null ? "&hellip;" : (x==="err" ? "&mdash;" : x);
+  const cards = [];
+  cards.push(kpiCard("Cash on hand", d.cash==null?"&hellip;":(d.cash==="err"?"&mdash;":fmtMoney(d.cash,d.ccy)), "Xero", "good-tone"));
+  cards.push(kpiCard("Owed to you", d.awaiting==null?"&hellip;":(d.awaiting==="err"?"&mdash;":fmtMoney(d.awaiting,d.ccy)), (d.overdueCount?d.overdueCount+" overdue":"receivables")));
+  cards.push(kpiCard("Open tasks", v(d.openTasks), d.openTasks!=null?"in ClickUp":"", ""));
+  cards.push(kpiCard("Overdue tasks", v(d.overdueTasks), "past due date", d.overdueTasks>0?"alert-tone":""));
+  cards.push(kpiCard("Today's meetings", v(d.meetings), "in calendar", ""));
+  cards.push(kpiCard("Unread email", v(d.mail), "needs a look", ""));
+  document.getElementById("kpis").innerHTML = cards.join("");
+}
+
+let chart;
+function drawChart(buckets){
+  const ctx = document.getElementById("taskChart");
+  const labels = Object.keys(buckets), vals = labels.map(k=>buckets[k]);
+  const colors = ["#d94a3a","#e0a020","#3b82c4","#9aa1ad","#c9ced6"];
+  if(chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: "bar",
+    data: { labels, datasets: [{ data: vals, backgroundColor: colors, borderRadius: 6, maxBarThickness: 54 }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.parsed.y + " task" + (c.parsed.y===1?"":"s") } } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "#eef0f3" } }, x: { grid: { display: false } } } }
+  });
+}
+
+function boot(){
+  document.getElementById("asof").textContent = dayName();
+  renderKpis();
+  loadMoney(); loadTasks(); loadCal(); loadMail();
+}
+boot();
+</script>
+</body>
+</html>
